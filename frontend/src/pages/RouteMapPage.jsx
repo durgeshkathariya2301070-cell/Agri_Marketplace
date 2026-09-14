@@ -1,22 +1,254 @@
 import Navbar from "../components/Navbar"
 import RouteMap from "../components/RouteMap"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
+import { useEffect, useState } from "react"
+import {
+    getDeliveryLocation,
+    getDeliveries,
+    getOptimizedDeliveryRoute
+} from "../services/api"
 
 
 function RouteMapPage() {
 
     const location = useLocation()
     const navigate = useNavigate()
+    const { deliveryId } = useParams()
 
-    const delivery = location.state?.delivery
+    const [delivery, setDelivery] = useState(
+        location.state?.delivery || null
+    )
 
-    if (!delivery) {
+    const [routeLoading, setRouteLoading] = useState(false)
+
+    const [loading, setLoading] = useState(
+        !location.state?.delivery
+    )
+
+    const [currentLatitude, setCurrentLatitude] = useState(
+        location.state?.delivery?.current_latitude ?? null
+    )
+
+    const [currentLongitude, setCurrentLongitude] = useState(
+        location.state?.delivery?.current_longitude ?? null
+    )
+
+
+    useEffect(() => {
+
+        const fetchDelivery = async () => {
+
+            try {
+
+                const deliveries = await getDeliveries()
+
+                const foundDelivery = deliveries.find(
+                    (item) =>
+                        Number(item.id) === Number(deliveryId)
+                )
+
+                if (foundDelivery) {
+
+                    setDelivery(foundDelivery)
+
+                    setCurrentLatitude(
+                        foundDelivery.current_latitude ?? null
+                    )
+
+                    setCurrentLongitude(
+                        foundDelivery.current_longitude ?? null
+                    )
+                }
+
+            } catch (error) {
+
+                console.error(
+                    "Failed to fetch delivery:",
+                    error
+                )
+
+            } finally {
+
+                setLoading(false)
+
+            }
+        }
+
+        if (deliveryId) {
+            fetchDelivery()
+        } else {
+            setLoading(false)
+        }
+
+    }, [deliveryId])
+
+
+    useEffect(() => {
+
+        const fetchRoute = async () => {
+
+            if (!delivery?.id) {
+                return
+            }
+
+            if (
+                delivery.pickup_coordinates &&
+                delivery.delivery_coordinates &&
+                delivery.road_coordinates &&
+                delivery.road_coordinates.length > 0
+            ) {
+                return
+            }
+
+            try {
+
+                setRouteLoading(true)
+
+                const routeData =
+                    await getOptimizedDeliveryRoute(
+                        delivery.id,
+                        delivery.pickup_location,
+                        delivery.delivery_location
+                    )
+
+                setDelivery({
+                    ...delivery,
+                    route: routeData.route,
+                    distance: routeData.total_distance_km,
+                    estimated_time:
+                        routeData.estimated_time_min,
+                    pickup_coordinates:
+                        routeData.pickup_coordinates,
+                    delivery_coordinates:
+                        routeData.delivery_coordinates,
+                    intermediate_locations:
+                        routeData.intermediate_locations,
+                    intermediate_coordinates:
+                        routeData.intermediate_coordinates,
+                    road_coordinates:
+                        routeData.road_coordinates
+                })
+
+            } catch (error) {
+
+                console.error(
+                    "Failed to load optimized route:",
+                    error
+                )
+
+            } finally {
+
+                setRouteLoading(false)
+
+            }
+        }
+
+        fetchRoute()
+
+    }, [delivery?.id])
+
+
+    useEffect(() => {
+
+        if (!delivery?.id) {
+            return
+        }
+
+        const fetchCurrentLocation = async () => {
+
+            try {
+
+                const data = await getDeliveryLocation(
+                    delivery.id
+                )
+                console.log("BUYER TRACKING LOCATION:", data)
+
+
+
+                if (
+                    data.latitude !== null &&
+                    data.latitude !== undefined
+                ) {
+                    setCurrentLatitude(
+                        Number(data.latitude)
+                    )
+                }
+
+                if (
+                    data.longitude !== null &&
+                    data.longitude !== undefined
+                ) {
+                    setCurrentLongitude(
+                        Number(data.longitude)
+                    )
+                }
+
+            } catch (error) {
+
+                console.error(
+                    "Failed to get delivery location:",
+                    error
+                )
+
+            }
+        }
+
+        fetchCurrentLocation()
+
+        const interval = setInterval(
+            fetchCurrentLocation,
+            5000
+        )
+
+        return () => clearInterval(interval)
+
+    }, [delivery?.id])
+
+
+    if (loading || routeLoading) {
+
         return (
             <div>
+
                 <Navbar />
 
                 <main>
-                    <h1>Route Map</h1>
+
+                    <h1>
+                        Delivery Route 🗺️
+                    </h1>
+
+                    <p>
+                        {loading
+                            ? "Loading delivery information..."
+                            : "Loading optimized route..."}
+                    </p>
+
+                </main>
+
+            </div>
+        )
+    }
+
+    console.log(
+        "ROUTE MAP GPS PROPS:",
+        currentLatitude,
+        currentLongitude
+    )
+
+
+    if (!delivery) {
+
+        return (
+            <div>
+
+                <Navbar />
+
+                <main>
+
+                    <h1>
+                        Route Map
+                    </h1>
 
                     <p>
                         Route information is not available.
@@ -29,11 +261,18 @@ function RouteMapPage() {
                     >
                         ← Back to Deliveries
                     </button>
+
                 </main>
+
             </div>
         )
     }
 
+    console.log(
+        "ROUTE MAP GPS PROPS:",
+        currentLatitude,
+        currentLongitude
+    )
     return (
         <div>
 
@@ -75,6 +314,12 @@ function RouteMapPage() {
 
                 </div>
 
+                {/* console.log(
+                "ROUTE MAP CURRENT GPS:",
+                currentLatitude,
+                currentLongitude
+                ) */}
+
                 <RouteMap
                     pickupCoordinates={
                         delivery.pickup_coordinates
@@ -103,6 +348,14 @@ function RouteMapPage() {
                     deliveryLocation={
                         delivery.delivery_location
                     }
+
+                    currentLatitude={
+                        currentLatitude
+                    }
+
+                    currentLongitude={
+                        currentLongitude
+                    }
                 />
 
             </main>
@@ -110,5 +363,6 @@ function RouteMapPage() {
         </div>
     )
 }
+
 
 export default RouteMapPage

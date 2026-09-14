@@ -1,11 +1,15 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useNavigate } from "react-router-dom";
 import {
     acceptOrder,
     rejectOrder,
     markOrderReady,
     markOrderInTransit,
     markOrderDelivered,
-    deleteOrder
+    confirmOrderReceived,
+    rejectOrderReceived,
+    deleteOrder,
+    updateDeliveryLocation
 } from "../services/api"
 
 function OrderCard({
@@ -18,6 +22,95 @@ function OrderCard({
 
     const [showDetails, setShowDetails] = useState(false)
     const [vehicleCapacity, setVehicleCapacity] = useState(500)
+    const navigate = useNavigate();
+    console.log("ORDER CARD FILE LOADED")
+    useEffect(() => {
+        console.log("GPS CHECK")
+        console.log("Role:", user?.role)
+        console.log("Order status:", order.status)
+        console.log("Delivery:", delivery)
+        console.log("Delivery ID:", delivery?.id)
+
+        if (user?.role !== "farmer") {
+            console.log("GPS STOP: user is not farmer")
+            return
+        }
+
+        if (order.status !== "in_transit") {
+            console.log("GPS STOP: order is not in transit")
+            return
+        }
+
+        if (!delivery?.id) {
+            console.log("GPS STOP: delivery ID is missing")
+            return
+        }
+
+        if (!navigator.geolocation) {
+            console.log("GPS STOP: geolocation not supported")
+            return
+        }
+
+        console.log("GPS STARTING")
+
+        let lastSentTime = 0
+
+        const watchId = navigator.geolocation.watchPosition(
+            async (position) => {
+                const now = Date.now()
+
+                if (now - lastSentTime < 5000) {
+                    return
+                }
+
+                lastSentTime = now
+
+                const latitude = position.coords.latitude
+                const longitude = position.coords.longitude
+
+                console.log(
+                    "GPS POSITION:",
+                    latitude,
+                    longitude
+                )
+
+                try {
+                    const result = await updateDeliveryLocation(
+                        delivery.id,
+                        latitude,
+                        longitude
+                    )
+
+                    console.log(
+                        "Farmer GPS location sent:",
+                        result
+                    )
+                } catch (error) {
+                    console.error(
+                        "GPS UPLOAD ERROR:",
+                        error
+                    )
+                }
+            },
+            (error) => {
+                console.error(
+                    "GPS POSITION ERROR:",
+                    error.code,
+                    error.message
+                )
+            },
+            {
+                enableHighAccuracy: true,
+                maximumAge: 5000,
+                timeout: 10000
+            }
+        )
+
+        return () => {
+            navigator.geolocation.clearWatch(watchId)
+            console.log("GPS WATCH STOPPED")
+        }
+    }, [user?.role, order.status, delivery?.id])
 
     const handleAccept = async () => {
         try {
@@ -72,6 +165,26 @@ function OrderCard({
         }
     }
 
+    const handleConfirmReceived = async () => {
+        try {
+            const updatedOrder = await confirmOrderReceived(order.id)
+            onStatusUpdate(order.id, updatedOrder.status)
+        } catch (error) {
+            console.error("Failed to confirm order received:", error)
+            alert(error.message)
+        }
+    }
+
+    const handleNotReceived = async () => {
+        try {
+            const updatedOrder = await rejectOrderReceived(order.id)
+            onStatusUpdate(order.id, updatedOrder.status)
+        } catch (error) {
+            console.error("Failed to report order not received:", error)
+            alert(error.message)
+        }
+    }
+
     const handleDelete = async () => {
         const confirmed = window.confirm(
             "Are you sure you want to delete this old order?"
@@ -102,6 +215,9 @@ function OrderCard({
 
     const getStatusLabel = (status) => {
         if (status === "in_transit") return "In Transit"
+        if (status === "delivery_confirmation_pending") {
+            return "Awaiting Buyer Confirmation"
+        }
 
         return status.charAt(0).toUpperCase() + status.slice(1)
     }
@@ -247,6 +363,23 @@ function OrderCard({
                 </div>
             )}
 
+            {user?.role === "buyer" &&
+                order.status === "delivery_confirmation_pending" && (
+                    <div className="order-actions">
+                        <p>
+                            📦 Did you receive your order?
+                        </p>
+
+                        <button onClick={handleConfirmReceived}>
+                            ✓ Yes, I received it
+                        </button>
+
+                        <button onClick={handleNotReceived}>
+                            ✕ No, I did not receive it
+                        </button>
+                    </div>
+                )}
+
             {user?.role === "farmer" &&
                 delivery &&
                 delivery.status !== "delivered" && (
@@ -270,6 +403,41 @@ function OrderCard({
                 >
                     View Order
                 </button>
+                {/* Buyer Track Order Button */}
+                {user?.role === "buyer" &&
+                    order.status === "in_transit" &&
+                    delivery?.id && (
+                        <button
+                            onClick={() =>
+                                navigate(
+                                    `/deliveries/${delivery.id}/map`,
+                                    {
+                                        state: { delivery: delivery }
+                                    }
+                                )
+                            }
+                        >
+                            📍 Track Order
+                        </button>
+                    )}
+                {/* Farmer View Route Button */}
+                {delivery?.route &&
+                    delivery?.road_coordinates &&
+                    delivery.road_coordinates.length > 0 &&
+                    !(user?.role === "buyer" && order.status === "in_transit") && (
+                        <button
+                            onClick={() =>
+                                navigate(
+                                    `/deliveries/${delivery.id}/map`,
+                                    {
+                                        state: { delivery: delivery }
+                                    }
+                                )
+                            }
+                        >
+                            🗺️ View Route on Map
+                        </button>
+                    )}
             </div>
 
             {(order.status === "delivered" ||

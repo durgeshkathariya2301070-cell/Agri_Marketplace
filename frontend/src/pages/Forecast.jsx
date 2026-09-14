@@ -59,7 +59,11 @@ function Forecast() {
                     product: result.product,
                     location: result.location,
                     forecast_date: result.forecast_date,
-                    predicted_quantity: result.predicted_quantity
+                    predicted_quantity: result.predicted_quantity,
+                    total_records: result.total_records,
+                    mandi_records: result.mandi_records,
+                    marketplace_records: result.marketplace_records,
+                    forecast_source: result.forecast_source
                 }
 
                 const filteredForecasts = currentForecasts.filter(

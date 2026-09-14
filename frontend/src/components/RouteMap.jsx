@@ -10,6 +10,12 @@ import {
 import { useEffect } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
+const farmerIcon = L.divIcon({
+    className: "farmer-location-icon",
+    html: "🚚",
+    iconSize: [80, 80],
+    iconAnchor: [40, 40]
+})
 
 
 function FitRoute({ coordinates }) {
@@ -41,7 +47,9 @@ function RouteMap({
     intermediateLocations,
     roadCoordinates,
     pickupLocation,
-    deliveryLocation
+    deliveryLocation,
+    currentLatitude,
+    currentLongitude
 }) {
 
     if (
@@ -62,6 +70,22 @@ function RouteMap({
         ...(intermediateCoordinates || []),
         deliveryCoordinates
     ]
+
+    const currentFarmerCoordinates =
+        currentLatitude !== null &&
+            currentLatitude !== undefined &&
+            currentLongitude !== null &&
+            currentLongitude !== undefined
+            ? [
+                Number(currentLatitude),
+                Number(currentLongitude)
+            ]
+            : null
+
+    console.log(
+        "FARMER MARKER COORDINATES:",
+        currentFarmerCoordinates
+    )
 
     return (
         <div
@@ -88,7 +112,14 @@ function RouteMap({
                 />
 
                 <FitRoute
-                    coordinates={roadCoordinates}
+                    coordinates={
+                        currentFarmerCoordinates
+                            ? [
+                                ...roadCoordinates,
+                                currentFarmerCoordinates
+                            ]
+                            : roadCoordinates
+                    }
                 />
 
                 <Polyline
@@ -98,12 +129,35 @@ function RouteMap({
                     }}
                 />
 
+                {currentFarmerCoordinates && (
+                    <Marker
+                        position={currentFarmerCoordinates}
+                        icon={farmerIcon}
+                        zIndexOffset={2000}
+                    >
+                        <Popup>
+                            <strong>
+                                🚚 Farmer Current Location
+                            </strong>
+                            <br />
+                            Delivery vehicle is currently here.
+                            <br />
+                            Latitude: {currentFarmerCoordinates[0]}
+                            <br />
+                            Longitude: {currentFarmerCoordinates[1]}
+                        </Popup>
+                    </Marker>
+                )}
                 <Marker
                     position={pickupCoordinates}
                 >
                     <Popup>
-                        <strong>Pickup Location</strong>
+                        <strong>
+                            Pickup Location
+                        </strong>
+
                         <br />
+
                         {pickupLocation}
                     </Popup>
                 </Marker>

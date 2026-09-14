@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -92,6 +92,8 @@ class Delivery(Base):
     estimated_time = Column(Integer)
     route = Column(String)
     status = Column(String, nullable=False, default="pending")
+    current_latitude = Column(Numeric(10, 7))
+    current_longitude = Column(Numeric(10, 7))
 
     order = relationship("Order", back_populates="delivery")
 
@@ -103,7 +105,8 @@ class DemandData(Base):
     product = Column(String, nullable=False)
     location = Column(String, nullable=False)
     date = Column(String, nullable=False)
-    quantity_sold = Column(Integer, nullable=False)
+    quantity_sold = Column(Numeric(12, 3), nullable=False)
+    source = Column(String, nullable=False, default="mandi")
 
 
 class Forecast(Base):
@@ -113,4 +116,5 @@ class Forecast(Base):
     product = Column(String, nullable=False)
     location = Column(String, nullable=False)
     forecast_date = Column(String, nullable=False)
-    predicted_quantity = Column(Integer, nullable=False)
+    predicted_quantity = Column(Numeric(12, 3), nullable=False)
+    source = Column(String, nullable=False, default="mandi")

@@ -11,6 +11,9 @@ import Forecast from "./pages/Forecast"
 import AddProduct from "./pages/AddProduct"
 import EditProduct from "./pages/EditProduct"
 import RouteMapPage from "./pages/RouteMapPage"
+import Settings from "./pages/Settings"
+import Profile from "./pages/Profile"
+import OrderHistory from "./pages/OrderHistory"
 
 function App() {
   return (
@@ -95,7 +98,45 @@ function App() {
           }
         />
 
+        <Route
+          path="/deliveries/:deliveryId/map"
+          element={
+            <ProtectedRoute>
+              <RouteMapPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings/order-history"
+          element={
+            <ProtectedRoute>
+              <OrderHistory />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
+
       </Routes>
+
+
     </BrowserRouter>
   )
 }

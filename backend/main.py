@@ -1,3 +1,7 @@
+import csv
+from io import StringIO
+from fastapi.responses import StreamingResponse
+from datetime import date
 from fastapi import FastAPI, Header, Depends
 from fastapi.responses import JSONResponse
 from database import engine, Base, SessionLocal
@@ -70,6 +74,63 @@ with engine.connect() as conn:
         )
     )
     conn.commit()
+
+
+@app.get("/profile")
+def get_profile(authorization: str = Header(None)):
+    current_user = get_current_user(authorization)
+
+    if current_user is None:
+        return JSONResponse(
+            status_code=401, content={"error": "Invalid or expired token"}
+        )
+
+    return {
+        "user_id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "phone": current_user.phone,
+        "location": current_user.location,
+    }
+
+
+@app.put("/profile")
+def update_profile(
+    name: str, phone: str, location: str, authorization: str = Header(None)
+):
+    current_user = get_current_user(authorization)
+
+    if current_user is None:
+        return JSONResponse(
+            status_code=401, content={"error": "Invalid or expired token"}
+        )
+
+    db = SessionLocal()
+
+    user = db.query(models.User).filter(models.User.id == current_user.id).first()
+
+    if not user:
+        db.close()
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    user.name = name
+    user.phone = phone
+    user.location = location
+
+    db.commit()
+    db.refresh(user)
+    db.close()
+
+    return {
+        "message": "Profile updated successfully",
+        "user_id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "phone": user.phone,
+        "location": user.location,
+    }
 
 
 @app.get("/")
@@ -377,28 +438,21 @@ def mark_order_ready(order_id: int, vehicle_capacity: int):
         "delivery_id": delivery.id,
     }
 
+
 @app.put("/orders/{order_id}/in-transit")
 def mark_order_in_transit(order_id: int):
 
     db = SessionLocal()
 
-    order = (
-        db.query(models.Order)
-        .filter(models.Order.id == order_id)
-        .first()
-    )
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
 
     if not order:
         db.close()
-        return {
-            "error": "Order not found"
-        }
+        return {"error": "Order not found"}
 
     if order.status != "ready":
         db.close()
-        return {
-            "error": "Only ready orders can be marked as in transit"
-        }
+        return {"error": "Only ready orders can be marked as in transit"}
 
     order.status = "in_transit"
 
@@ -409,17 +463,9 @@ def mark_order_in_transit(order_id: int):
 
     db.refresh(order)
 
-    delivery_id = (
-        order.delivery.id
-        if order.delivery
-        else None
-    )
+    delivery_id = order.delivery.id if order.delivery else None
 
-    delivery_status = (
-        order.delivery.status
-        if order.delivery
-        else None
-    )
+    delivery_status = order.delivery.status if order.delivery else None
 
     db.close()
 
@@ -428,8 +474,103 @@ def mark_order_in_transit(order_id: int):
         "order_id": order.id,
         "status": order.status,
         "delivery_id": delivery_id,
-        "delivery_status": delivery_status
+        "delivery_status": delivery_status,
     }
+
+
+@app.put("/deliveries/{delivery_id}/location")
+def update_delivery_location(
+    delivery_id: int,
+    latitude: float,
+    longitude: float,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+
+    if latitude < -90 or latitude > 90:
+        return {"error": "Invalid latitude"}
+
+    if longitude < -180 or longitude > 180:
+        return {"error": "Invalid longitude"}
+
+    db = SessionLocal()
+
+    delivery = (
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
+    )
+
+    if not delivery:
+        db.close()
+        return {"error": "Delivery not found"}
+
+    order = delivery.order
+
+    if current_user.id != order.farmer_id:
+        db.close()
+        return {"error": "Only the farmer can update delivery location"}
+
+    if delivery.status != "in_transit":
+        db.close()
+        return {"error": "Location can only be updated while delivery is in transit"}
+
+    delivery.current_latitude = latitude
+    delivery.current_longitude = longitude
+
+    db.commit()
+    db.refresh(delivery)
+    db.close()
+
+    return {
+        "message": "Delivery location updated",
+        "delivery_id": delivery.id,
+        "latitude": delivery.current_latitude,
+        "longitude": delivery.current_longitude,
+    }
+
+
+@app.get("/deliveries/{delivery_id}/location")
+def get_delivery_location(delivery_id: int, authorization: str = Header(None)):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+
+    db = SessionLocal()
+
+    delivery = (
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
+    )
+
+    if not delivery:
+        db.close()
+        return {"error": "Delivery not found"}
+
+    order = delivery.order
+
+    if current_user.id not in [order.farmer_id, order.buyer_id]:
+        db.close()
+        return {"error": "You are not authorized to view this delivery"}
+
+    tracking_available = delivery.status in [
+        "in_transit",
+        "delivery_confirmation_pending",
+    ]
+
+    response = {
+        "delivery_id": delivery.id,
+        "status": delivery.status,
+        "tracking_available": tracking_available,
+        "latitude": delivery.current_latitude,
+        "longitude": delivery.current_longitude,
+    }
+
+    db.close()
+
+    return response
+
 
 @app.put("/orders/{order_id}/delivered")
 def mark_order_delivered(order_id: int):
@@ -445,9 +586,8 @@ def mark_order_delivered(order_id: int):
         db.close()
         return {"error": "Only orders in transit can be marked as delivered"}
 
-    order.status = "delivered"
-    if order.delivery:
-        order.delivery.status = "delivered"
+    # Send delivery confirmation request to buyer
+    order.status = "delivery_confirmation_pending"
 
     db.commit()
     db.refresh(order)
@@ -455,7 +595,91 @@ def mark_order_delivered(order_id: int):
     db.close()
 
     return {
-        "message": "Order marked as delivered",
+        "message": "Delivery confirmation requested from buyer",
+        "order_id": order.id,
+        "status": order.status,
+    }
+
+
+@app.put("/orders/{order_id}/confirm-received")
+def confirm_order_received(order_id: int):
+    db = SessionLocal()
+
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+
+    if not order:
+        db.close()
+        return {"error": "Order not found"}
+
+    if order.status != "delivery_confirmation_pending":
+        db.close()
+        return {"error": "Order is not waiting for delivery confirmation"}
+
+    # Buyer confirmed that the order was received
+    order.status = "delivered"
+
+    if order.delivery:
+        order.delivery.status = "delivered"
+
+    # Get product information
+    product = (
+        db.query(models.Product).filter(models.Product.id == order.product_id).first()
+    )
+
+    if product:
+        # Convert marketplace quantity to tonnes
+        quantity_tonnes = order.quantity / 1000
+
+        # Record confirmed delivered order as marketplace demand
+        demand_data = models.DemandData(
+            product=product.name.strip().lower(),
+            location=product.location.strip().lower(),
+            date=str(date.today()),
+            quantity_sold=quantity_tonnes,
+            source="marketplace",
+        )
+
+        db.add(demand_data)
+
+    db.commit()
+    db.refresh(order)
+
+    db.close()
+
+    return {
+        "message": "Order received and marked as delivered",
+        "order_id": order.id,
+        "status": order.status,
+    }
+
+
+@app.put("/orders/{order_id}/not-received")
+def reject_order_received(order_id: int):
+    db = SessionLocal()
+
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+
+    if not order:
+        db.close()
+        return {"error": "Order not found"}
+
+    if order.status != "delivery_confirmation_pending":
+        db.close()
+        return {"error": "Order is not waiting for delivery confirmation"}
+
+    # Buyer did not receive the order
+    order.status = "in_transit"
+
+    if order.delivery:
+        order.delivery.status = "in_transit"
+
+    db.commit()
+    db.refresh(order)
+
+    db.close()
+
+    return {
+        "message": "Order remains in transit",
         "order_id": order.id,
         "status": order.status,
     }
@@ -587,9 +811,29 @@ def get_deliveries():
 
     deliveries = db.query(models.Delivery).all()
 
+    result = []
+
+    for delivery in deliveries:
+
+        delivery_data = {
+            "id": delivery.id,
+            "order_id": delivery.order_id,
+            "pickup_location": delivery.pickup_location,
+            "delivery_location": delivery.delivery_location,
+            "vehicle_capacity": delivery.vehicle_capacity,
+            "distance": delivery.distance,
+            "estimated_time": delivery.estimated_time,
+            "route": delivery.route,
+            "status": delivery.status,
+            "current_latitude": delivery.current_latitude,
+            "current_longitude": delivery.current_longitude,
+        }
+
+        result.append(delivery_data)
+
     db.close()
 
-    return deliveries
+    return result
 
 
 def geocode_location(location):
@@ -604,31 +848,18 @@ def geocode_location(location):
         "&limit=1"
     )
 
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "SmartAgriMarketplace/1.0"
-        }
-    )
+    request = Request(url, headers={"User-Agent": "SmartAgriMarketplace/1.0"})
 
     with urlopen(request, timeout=10) as response:
-        data = json.loads(
-            response.read().decode("utf-8")
-        )
+        data = json.loads(response.read().decode("utf-8"))
 
     if not data:
         return None
 
-    return {
-        "latitude": float(data[0]["lat"]),
-        "longitude": float(data[0]["lon"])
-    }
+    return {"latitude": float(data[0]["lat"]), "longitude": float(data[0]["lon"])}
 
 
-def reverse_geocode_location(
-    longitude,
-    latitude
-):
+def reverse_geocode_location(longitude, latitude):
     url = (
         "https://nominatim.openstreetmap.org/reverse"
         f"?lat={latitude}"
@@ -637,17 +868,10 @@ def reverse_geocode_location(
         "&zoom=10"
     )
 
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "SmartAgriMarketplace/1.0"
-        }
-    )
+    request = Request(url, headers={"User-Agent": "SmartAgriMarketplace/1.0"})
 
     with urlopen(request, timeout=15) as response:
-        data = json.loads(
-            response.read().decode("utf-8")
-        )
+        data = json.loads(response.read().decode("utf-8"))
 
     address = data.get("address", {})
 
@@ -661,38 +885,21 @@ def reverse_geocode_location(
     )
 
 
-def calculate_real_route(
-    pickup_location,
-    delivery_location
-):
+def calculate_real_route(pickup_location, delivery_location):
     """
     Get real road distance and travel time
     between pickup and delivery locations.
     """
 
-    pickup = geocode_location(
-        pickup_location
-    )
+    pickup = geocode_location(pickup_location)
 
-    destination = geocode_location(
-        delivery_location
-    )
+    destination = geocode_location(delivery_location)
 
     if not pickup:
-        return {
-            "error": (
-                f"Pickup location not found: "
-                f"{pickup_location}"
-            )
-        }
+        return {"error": (f"Pickup location not found: " f"{pickup_location}")}
 
     if not destination:
-        return {
-            "error": (
-                f"Delivery location not found: "
-                f"{delivery_location}"
-            )
-        }
+        return {"error": (f"Delivery location not found: " f"{delivery_location}")}
 
     url = (
         "https://router.project-osrm.org/route/v1/driving/"
@@ -701,36 +908,19 @@ def calculate_real_route(
         "?overview=full&geometries=geojson"
     )
 
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "SmartAgriMarketplace/1.0"
-        }
-    )
+    request = Request(url, headers={"User-Agent": "SmartAgriMarketplace/1.0"})
 
     with urlopen(request, timeout=15) as response:
-        data = json.loads(
-            response.read().decode("utf-8")
-        )
+        data = json.loads(response.read().decode("utf-8"))
 
-    if (
-        data.get("code") != "Ok"
-        or not data.get("routes")
-    ):
-        return {
-            "error": "No road route found"
-        }
+    if data.get("code") != "Ok" or not data.get("routes"):
+        return {"error": "No road route found"}
 
     route = data["routes"][0]
 
-    distance_km = round(
-        route["distance"] / 1000,
-        2
-    )
+    distance_km = round(route["distance"] / 1000, 2)
 
-    estimated_time_min = round(
-        route["duration"] / 60
-    )
+    estimated_time_min = round(route["duration"] / 60)
 
     coordinates = route["geometry"]["coordinates"]
 
@@ -744,13 +934,10 @@ def calculate_real_route(
             total_points // 5,
             (total_points * 2) // 5,
             (total_points * 3) // 5,
-            (total_points * 4) // 5
+            (total_points * 4) // 5,
         ]
 
-        intermediate_points = [
-            coordinates[index]
-            for index in selected_indexes
-        ]
+        intermediate_points = [coordinates[index] for index in selected_indexes]
     else:
         intermediate_points = []
 
@@ -760,17 +947,11 @@ def calculate_real_route(
         longitude = point[0]
         latitude = point[1]
 
-        place = reverse_geocode_location(
-            longitude,
-            latitude
-        )
+        place = reverse_geocode_location(longitude, latitude)
 
         intermediate_locations.append(place)
 
-    print(
-        "INTERMEDIATE LOCATIONS:",
-        intermediate_locations
-    )
+    print("INTERMEDIATE LOCATIONS:", intermediate_locations)
 
     return {
         "route": (
@@ -780,23 +961,13 @@ def calculate_real_route(
         ),
         "distance_km": distance_km,
         "estimated_time_min": estimated_time_min,
-        "pickup_coordinates": [
-            pickup["latitude"],
-            pickup["longitude"]
-        ],
-        "delivery_coordinates": [
-            destination["latitude"],
-            destination["longitude"]
-        ],
+        "pickup_coordinates": [pickup["latitude"], pickup["longitude"]],
+        "delivery_coordinates": [destination["latitude"], destination["longitude"]],
         "intermediate_locations": intermediate_locations,
         "intermediate_coordinates": [
-            [point[1], point[0]]
-            for point in intermediate_points
+            [point[1], point[0]] for point in intermediate_points
         ],
-        "road_coordinates": [
-            [point[1], point[0]]
-            for point in coordinates
-        ]
+        "road_coordinates": [[point[1], point[0]] for point in coordinates],
     }
 
 
@@ -806,23 +977,14 @@ def optimize_delivery(delivery_id: int):
     db = SessionLocal()
 
     delivery = (
-        db.query(models.Delivery)
-        .filter(
-            models.Delivery.id == delivery_id
-        )
-        .first()
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
     )
 
     if not delivery:
         db.close()
-        return {
-            "error": "Delivery not found"
-        }
+        return {"error": "Delivery not found"}
 
-    result = calculate_real_route(
-        delivery.pickup_location,
-        delivery.delivery_location
-    )
+    result = calculate_real_route(delivery.pickup_location, delivery.delivery_location)
 
     if "error" in result:
         db.close()
@@ -832,9 +994,7 @@ def optimize_delivery(delivery_id: int):
 
     delivery.distance = result["distance_km"]
 
-    delivery.estimated_time = (
-        result["estimated_time_min"]
-    )
+    delivery.estimated_time = result["estimated_time_min"]
 
     db.commit()
 
@@ -843,71 +1003,43 @@ def optimize_delivery(delivery_id: int):
     db.close()
 
     return {
-        "message": (
-            "Delivery route optimized successfully"
-        ),
+        "message": ("Delivery route optimized successfully"),
         "delivery_id": delivery.id,
         "route": result["route"],
         "total_distance_km": result["distance_km"],
-        "estimated_time_min": (
-            result["estimated_time_min"]
-        ),
+        "estimated_time_min": (result["estimated_time_min"]),
         "pickup_coordinates": result["pickup_coordinates"],
         "delivery_coordinates": result["delivery_coordinates"],
         "intermediate_locations": result["intermediate_locations"],
         "intermediate_coordinates": result["intermediate_coordinates"],
-        "road_coordinates": result["road_coordinates"]
+        "road_coordinates": result["road_coordinates"],
     }
 
 
 @app.put("/deliveries/{delivery_id}/in-transit")
-def mark_delivery_in_transit(
-    delivery_id: int
-):
+def mark_delivery_in_transit(delivery_id: int):
 
     db = SessionLocal()
 
     delivery = (
-        db.query(models.Delivery)
-        .filter(
-            models.Delivery.id == delivery_id
-        )
-        .first()
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
     )
 
     if not delivery:
         db.close()
-        return {
-            "error": "Delivery not found"
-        }
+        return {"error": "Delivery not found"}
 
     if delivery.status != "ready":
         db.close()
-        return {
-            "error": (
-                "Only ready deliveries "
-                "can be marked as in transit"
-            )
-        }
+        return {"error": ("Only ready deliveries " "can be marked as in transit")}
 
     if not delivery.route:
         db.close()
-        return {
-            "error": (
-                "Optimize the delivery route "
-                "before starting transit"
-            )
-        }
+        return {"error": ("Optimize the delivery route " "before starting transit")}
 
     delivery.status = "in_transit"
 
-    order = (
-        db.query(models.Order)
-        .filter(
-            models.Order.id == delivery.order_id
-        )
-        .first()
-    )
+    order = db.query(models.Order).filter(models.Order.id == delivery.order_id).first()
 
     if order:
         order.status = "in_transit"
@@ -919,53 +1051,32 @@ def mark_delivery_in_transit(
     db.close()
 
     return {
-        "message": (
-            "Delivery marked as in transit"
-        ),
+        "message": ("Delivery marked as in transit"),
         "delivery_id": delivery.id,
-        "status": delivery.status
+        "status": delivery.status,
     }
 
 
 @app.put("/deliveries/{delivery_id}/delivered")
-def mark_delivery_delivered(
-    delivery_id: int
-):
+def mark_delivery_delivered(delivery_id: int):
 
     db = SessionLocal()
 
     delivery = (
-        db.query(models.Delivery)
-        .filter(
-            models.Delivery.id == delivery_id
-        )
-        .first()
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
     )
 
     if not delivery:
         db.close()
-        return {
-            "error": "Delivery not found"
-        }
+        return {"error": "Delivery not found"}
 
     if delivery.status != "in_transit":
         db.close()
-        return {
-            "error": (
-                "Only in-transit deliveries "
-                "can be marked as delivered"
-            )
-        }
+        return {"error": ("Only in-transit deliveries " "can be marked as delivered")}
 
     delivery.status = "delivered"
 
-    order = (
-        db.query(models.Order)
-        .filter(
-            models.Order.id == delivery.order_id
-        )
-        .first()
-    )
+    order = db.query(models.Order).filter(models.Order.id == delivery.order_id).first()
 
     if order:
         order.status = "delivered"
@@ -977,47 +1088,32 @@ def mark_delivery_delivered(
     db.close()
 
     return {
-        "message": (
-            "Delivery marked as delivered"
-        ),
+        "message": ("Delivery marked as delivered"),
         "delivery_id": delivery.id,
-        "status": delivery.status
+        "status": delivery.status,
     }
 
 
 @app.put("/deliveries/{delivery_id}/status")
-def update_delivery_status(
-    delivery_id: int,
-    status: str
-):
+def update_delivery_status(delivery_id: int, status: str):
 
     db = SessionLocal()
 
     delivery = (
-        db.query(models.Delivery)
-        .filter(
-            models.Delivery.id == delivery_id
-        )
-        .first()
+        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
     )
 
     if not delivery:
         db.close()
-        return {
-            "error": "Delivery not found"
-        }
+        return {"error": "Delivery not found"}
 
-    allowed_statuses = [
-        "pending",
-        "in_transit",
-        "delivered"
-    ]
+    allowed_statuses = ["pending", "in_transit", "delivered"]
 
     if status not in allowed_statuses:
         db.close()
         return {
             "error": "Invalid delivery status",
-            "allowed_statuses": allowed_statuses
+            "allowed_statuses": allowed_statuses,
         }
 
     delivery.status = status
@@ -1029,11 +1125,9 @@ def update_delivery_status(
     db.close()
 
     return {
-        "message": (
-            "Delivery status updated successfully"
-        ),
+        "message": ("Delivery status updated successfully"),
         "delivery_id": delivery.id,
-        "status": delivery.status
+        "status": delivery.status,
     }
 
 
@@ -1042,9 +1136,13 @@ def create_forecast(
     product: str = "tomato", location: str = "Mumbai", days_ahead: int = 7
 ):
     try:
-        predicted_quantity = predict_demand(
-            days_ahead=days_ahead, product=product, location=location
-        )
+        (
+            predicted_quantity,
+            data_count,
+            mandi_count,
+            marketplace_count,
+            forecast_source,
+        ) = predict_demand(days_ahead=days_ahead, product=product, location=location)
 
     except ValueError:
         return JSONResponse(
@@ -1061,6 +1159,7 @@ def create_forecast(
         location=location,
         forecast_date=forecast_date,
         predicted_quantity=predicted_quantity,
+        source=forecast_source,
     )
 
     return {
@@ -1070,6 +1169,10 @@ def create_forecast(
         "forecast_date": forecast_date,
         "predicted_quantity": predicted_quantity,
         "forecast_id": forecast.id,
+        "total_records": data_count,
+        "mandi_records": mandi_count,
+        "marketplace_records": marketplace_count,
+        "forecast_source": forecast_source,
     }
 
 
@@ -1084,6 +1187,7 @@ def get_forecasts():
             "location": forecast.location,
             "forecast_date": forecast.forecast_date,
             "predicted_quantity": forecast.predicted_quantity,
+            "forecast_source": forecast.source,
         }
         for forecast in forecasts
     ]
@@ -1159,3 +1263,89 @@ def register_user(
         "email": user.email,
         "role": user.role,
     }
+
+
+@app.get("/orders/history/csv")
+def download_order_history(authorization: str = Header(None)):
+    current_user = get_current_user(authorization)
+
+    if current_user is None:
+        return JSONResponse(
+            status_code=401, content={"error": "Invalid or expired token"}
+        )
+
+    db = SessionLocal()
+
+    if current_user.role == "buyer":
+        orders = (
+            db.query(models.Order)
+            .filter(
+                models.Order.buyer_id == current_user.id,
+                models.Order.deleted_by_buyer == False,
+            )
+            .order_by(models.Order.id.desc())
+            .all()
+        )
+
+        filename = "buyer_order_history.csv"
+
+    else:
+        orders = (
+            db.query(models.Order)
+            .filter(
+                models.Order.farmer_id == current_user.id,
+                models.Order.deleted_by_farmer == False,
+            )
+            .order_by(models.Order.id.desc())
+            .all()
+        )
+
+        filename = "farmer_order_history.csv"
+
+    output = StringIO()
+
+    writer = csv.writer(output)
+
+    if current_user.role == "buyer":
+        writer.writerow(
+            ["Order ID", "Product", "Farmer", "Quantity", "Total Price", "Status"]
+        )
+
+        for order in orders:
+            writer.writerow(
+                [
+                    order.id,
+                    order.product.name,
+                    order.farmer.name,
+                    order.quantity,
+                    order.total_price,
+                    order.status,
+                ]
+            )
+
+    else:
+        writer.writerow(
+            ["Order ID", "Product", "Buyer", "Quantity", "Total Price", "Status"]
+        )
+
+        for order in orders:
+            writer.writerow(
+                [
+                    order.id,
+                    order.product.name,
+                    order.buyer.name,
+                    order.quantity,
+                    order.total_price,
+                    order.status,
+                ]
+            )
+
+    db.close()
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

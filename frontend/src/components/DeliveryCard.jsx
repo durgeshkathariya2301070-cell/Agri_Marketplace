@@ -131,9 +131,8 @@ function DeliveryCard({
 
                         return (
                             <div
-                                className={`delivery-step ${
-                                    completed ? "completed" : ""
-                                }`}
+                                className={`delivery-step ${completed ? "completed" : ""
+                                    }`}
                                 key={step}
                             >
 
@@ -154,16 +153,18 @@ function DeliveryCard({
 
             <div className="delivery-actions">
 
-                {delivery.status === "ready" && !delivery.route && (
-                    <button
-                        onClick={handleOptimize}
-                        disabled={optimizing}
-                    >
-                        {optimizing
-                            ? "Optimizing..."
-                            : "🚚 Optimize Route"}
-                    </button>
-                )}
+                {(delivery.status === "ready" ||
+                    delivery.status === "in_transit") &&
+                    !delivery.route && (
+                        <button
+                            onClick={handleOptimize}
+                            disabled={optimizing}
+                        >
+                            {optimizing
+                                ? "Optimizing..."
+                                : "🚚 Optimize Route"}
+                        </button>
+                    )}
 
                 {delivery.status === "in_transit" && (
                     <button

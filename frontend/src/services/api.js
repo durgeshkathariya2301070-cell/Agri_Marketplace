@@ -11,6 +11,72 @@ function getAuthHeaders() {
     }
 }
 
+export async function getProfile() {
+    const response = await fetch(
+        `${API_URL}/profile`,
+        {
+            method: "GET",
+            headers: getAuthHeaders()
+        }
+    )
+
+    if (!response.ok) {
+        throw new Error("Failed to load profile")
+    }
+
+    return await response.json()
+}
+
+export async function updateProfile(name, phone, location) {
+    const params = new URLSearchParams({
+        name,
+        phone,
+        location
+    })
+
+    const response = await fetch(
+        `${API_URL}/profile?${params.toString()}`,
+        {
+            method: "PUT",
+            headers: getAuthHeaders()
+        }
+    )
+
+    if (!response.ok) {
+        throw new Error("Failed to update profile")
+    }
+
+    return await response.json()
+}
+
+export async function downloadOrderHistory() {
+    const response = await fetch(
+        `${API_URL}/orders/history/csv`,
+        {
+            method: "GET",
+            headers: getAuthHeaders()
+        }
+    )
+
+    if (!response.ok) {
+        throw new Error("Failed to download order history")
+    }
+
+    const blob = await response.blob()
+
+    const url = window.URL.createObjectURL(blob)
+
+    const link = document.createElement("a")
+    link.href = url
+    link.download = "order_history.csv"
+
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+
+    window.URL.revokeObjectURL(url)
+}
+
 export async function getProducts() {
     const response = await fetch(`${API_URL}/products`, {
         headers: getAuthHeaders()
@@ -87,6 +153,44 @@ export async function markOrderDelivered(orderId) {
     if (!response.ok || data.error) {
         throw new Error(
             data.error || "Failed to mark order as delivered"
+        )
+    }
+
+    return data
+}
+
+export async function confirmOrderReceived(orderId) {
+    const response = await fetch(
+        `${API_URL}/orders/${orderId}/confirm-received`,
+        {
+            method: "PUT"
+        }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error || "Failed to confirm order received"
+        )
+    }
+
+    return data
+}
+
+export async function rejectOrderReceived(orderId) {
+    const response = await fetch(
+        `${API_URL}/orders/${orderId}/not-received`,
+        {
+            method: "PUT"
+        }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error || "Failed to report order not received"
         )
     }
 
@@ -207,6 +311,30 @@ export async function optimizeDelivery(deliveryId) {
     }
 
     return response.json()
+}
+
+export async function getOptimizedDeliveryRoute(
+    deliveryId,
+    pickupLocation,
+    deliveryLocation
+) {
+    const response = await fetch(
+        `${API_URL}/deliveries/${deliveryId}/optimize`,
+        {
+            method: "PUT"
+        }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error ||
+            "Failed to get optimized delivery route"
+        )
+    }
+
+    return data
 }
 
 export async function getForecasts() {
@@ -334,6 +462,55 @@ export async function updateProduct(productId, productData) {
 
     if (data.error) {
         throw new Error(data.error)
+    }
+
+    return data
+}
+
+export async function updateDeliveryLocation(
+    deliveryId,
+    latitude,
+    longitude
+) {
+    const params = new URLSearchParams({
+        latitude: String(latitude),
+        longitude: String(longitude)
+    })
+
+    const response = await fetch(
+        `${API_URL}/deliveries/${deliveryId}/location?${params}`,
+        {
+            method: "PUT",
+            headers: getAuthHeaders()
+        }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error || "Failed to update delivery location"
+        )
+    }
+
+    return data
+}
+
+export async function getDeliveryLocation(deliveryId) {
+    const response = await fetch(
+        `${API_URL}/deliveries/${deliveryId}/location`,
+        {
+            method: "GET",
+            headers: getAuthHeaders()
+        }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error || "Failed to get delivery location"
+        )
     }
 
     return data
