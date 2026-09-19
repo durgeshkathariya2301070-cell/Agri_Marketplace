@@ -1,5 +1,39 @@
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+
+
+class SimpleLinearRegression:
+    def fit(self, X, y):
+        x_values = [float(value) for value in X["day_number"]]
+        y_values = [float(value) for value in y]
+
+        count = len(x_values)
+
+        if count == 0:
+            raise ValueError("No valid historical demand data")
+
+        x_mean = sum(x_values) / count
+        y_mean = sum(y_values) / count
+
+        denominator = sum((x - x_mean) ** 2 for x in x_values)
+
+        if denominator == 0:
+            self.slope = 0.0
+        else:
+            self.slope = (
+                sum(
+                    (x - x_mean) * (y_value - y_mean)
+                    for x, y_value in zip(x_values, y_values)
+                )
+                / denominator
+            )
+
+        self.intercept = y_mean - self.slope * x_mean
+
+        return self
+
+    def predict(self, X):
+        return [self.intercept + self.slope * float(value) for value in X["day_number"]]
+
 
 from database import SessionLocal
 from models import DemandData, Forecast
@@ -70,7 +104,7 @@ def train_demand_model(product="tomato", location="Mumbai"):
     y = df["quantity_sold"]
 
     # Train AI model
-    model = LinearRegression()
+    model = SimpleLinearRegression()
 
     model.fit(X, y)
 
@@ -87,8 +121,6 @@ def predict_demand(days_ahead=7, product="tomato", location="Mumbai"):
     future_data = pd.DataFrame({"day_number": [future_day]})
 
     prediction = model.predict(future_data)
-    
-    
 
     predicted_quantity = float(max(0, round(float(prediction[0]), 3)))
 
@@ -101,15 +133,23 @@ def predict_demand(days_ahead=7, product="tomato", location="Mumbai"):
     )
 
 
-def save_forecast(product, location, forecast_date, predicted_quantity, source):
+def save_forecast(
+    product,
+    location,
+    forecast_date,
+    predicted_quantity,
+    source,
+    user_id,
+):
     db = SessionLocal()
 
     forecast = Forecast(
+        user_id=user_id,
         product=product,
         location=location,
         forecast_date=forecast_date,
         predicted_quantity=predicted_quantity,
-        source=source
+        source=source,
     )
 
     db.add(forecast)

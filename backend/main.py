@@ -2,7 +2,7 @@ import csv
 from io import StringIO
 from fastapi.responses import StreamingResponse
 from datetime import date
-from fastapi import FastAPI, Header, Depends
+from fastapi import FastAPI, Header, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from database import engine, Base, SessionLocal
 import models
@@ -13,9 +13,22 @@ from datetime import date, timedelta
 import json
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+import secrets
+from pwdlib import PasswordHash
+
+password_hash = PasswordHash.recommended()
+
 
 app = FastAPI()
 TOKENS = {}
+
+from collections import defaultdict
+from time import time
+
+LOGIN_ATTEMPTS = defaultdict(list)
+
+LOGIN_LIMIT = 5
+LOGIN_WINDOW_SECONDS = 300
 
 
 def get_current_user(authorization: str = Header(None)):
@@ -147,7 +160,34 @@ def add_product(
     location: str,
     farmer_id: int,
     description: str = "",
+    authorization: str = Header(None),
 ):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can add products"},
+        )
+
+    farmer_id = current_user.id
+
+    if quantity < 0:
+        return JSONResponse(
+            status_code=400, content={"error": "Quantity cannot be negative"}
+        )
+
+    if price < 0:
+        return JSONResponse(
+            status_code=400, content={"error": "Price cannot be negative"}
+        )
+
     db = SessionLocal()
 
     product = models.Product(
@@ -194,7 +234,24 @@ def update_product(
     price: int,
     location: str,
     farmer_id: int,
+    authorization: str = Header(None),
 ):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can edit products"},
+        )
+
+    farmer_id = current_user.id
+
     db = SessionLocal()
 
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
@@ -229,7 +286,27 @@ def update_product(
 
 
 @app.post("/orders")
-def create_order(buyer_id: int, farmer_id: int, product_id: int, quantity: int):
+def create_order(
+    buyer_id: int,
+    farmer_id: int,
+    product_id: int,
+    quantity: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "buyer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only buyers can create orders"},
+        )
+
     db = SessionLocal()
 
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
@@ -243,14 +320,25 @@ def create_order(buyer_id: int, farmer_id: int, product_id: int, quantity: int):
         return {"error": "Quantity must be greater than 0"}
 
     if quantity > product.quantity:
+        available_quantity = product.quantity
         db.close()
-        return {"error": "Not enough inventory", "available_quantity": product.quantity}
+
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    f"Only {available_quantity} {product.unit} is available. "
+                    "You cannot order more than the available quantity."
+            ),
+            "available_quantity": available_quantity,
+        },
+    )
 
     total_price = quantity * product.price
 
     order = models.Order(
-        buyer_id=buyer_id,
-        farmer_id=farmer_id,
+        buyer_id=current_user.id,
+        farmer_id=product.farmer_id,
         product_id=product_id,
         quantity=quantity,
         total_price=total_price,
@@ -267,6 +355,45 @@ def create_order(buyer_id: int, farmer_id: int, product_id: int, quantity: int):
         "order_id": order.id,
         "total_price": total_price,
     }
+    
+
+    # db = SessionLocal()
+
+    # product = db.query(models.Product).filter(models.Product.id == product_id).first()
+
+    # if not product:
+    #     db.close()
+    #     return {"error": "Product not found"}
+
+    # if quantity <= 0:
+    #     db.close()
+    #     return {"error": "Quantity must be greater than 0"}
+
+    # if quantity > product.quantity:
+    #     db.close()
+    #     return {"error": "Not enough inventory", "available_quantity": product.quantity}
+
+    # total_price = quantity * product.price
+
+    # order = models.Order(
+    #     buyer_id=buyer_id,
+    #     farmer_id=farmer_id,
+    #     product_id=product_id,
+    #     quantity=quantity,
+    #     total_price=total_price,
+    #     status="pending",
+    # )
+
+    # db.add(order)
+    # db.commit()
+    # db.refresh(order)
+    # db.close()
+
+    # return {
+    #     "message": "Order created successfully",
+    #     "order_id": order.id,
+    #     "total_price": total_price,
+    # }
 
 
 @app.get("/orders")
@@ -279,68 +406,132 @@ def get_orders(authorization: str = Header(None)):
         )
 
     db = SessionLocal()
-    orders = db.query(models.Order).all()
 
-    result = []
+    try:
+        if current_user.role == "farmer":
+            orders = (
+                db.query(models.Order)
+                .filter(
+                    models.Order.farmer_id == current_user.id,
+                    models.Order.deleted_by_farmer == False,
+                )
+                .all()
+            )
 
-    for order in orders:
-        product = (
-            db.query(models.Product)
-            .filter(models.Product.id == order.product_id)
-            .first()
-        )
+        elif current_user.role == "buyer":
+            orders = (
+                db.query(models.Order)
+                .filter(
+                    models.Order.buyer_id == current_user.id,
+                    models.Order.deleted_by_buyer == False,
+                )
+                .all()
+            )
 
-        result.append(
-            {
-                "id": order.id,
-                "buyer_id": order.buyer_id,
-                "buyer_name": order.buyer.name if order.buyer else "Unknown",
-                "buyer_location": order.buyer.location if order.buyer else "Unknown",
-                "farmer_id": order.farmer_id,
-                "product_id": order.product_id,
-                "product_name": product.name if product else "Unknown Product",
-                "quantity": order.quantity,
-                "total_price": order.total_price,
-                "status": order.status,
-                "deleted_by_buyer": order.deleted_by_buyer or False,
-                "deleted_by_farmer": order.deleted_by_farmer or False,
-            }
-        )
+        else:
+            return JSONResponse(status_code=403, content={"error": "Access denied"})
 
-    db.close()
+        result = []
 
-    return result
+        for order in orders:
+            product = (
+                db.query(models.Product)
+                .filter(models.Product.id == order.product_id)
+                .first()
+            )
 
+            result.append(
+                {
+                    "id": order.id,
+                    "buyer_id": order.buyer_id,
+                    "buyer_name": order.buyer.name if order.buyer else "Unknown",
+                    "buyer_location": (
+                        order.buyer.location if order.buyer else "Unknown"
+                    ),
+                    "farmer_id": order.farmer_id,
+                    "product_id": order.product_id,
+                    "product_name": product.name if product else "Unknown Product",
+                    "quantity": order.quantity,
+                    "total_price": order.total_price,
+                    "status": order.status,
+                    "deleted_by_buyer": order.deleted_by_buyer or False,
+                    "deleted_by_farmer": order.deleted_by_farmer or False,
+                }
+            )
 
-@app.put("/orders/{order_id}/status")
-def update_order_status(order_id: int, status: str):
-    db = SessionLocal()
+        return result
 
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
-
-    if not order:
+    finally:
         db.close()
-        return {"error": "Order not found"}
 
-    if status not in ALLOWED_ORDER_STATUSES:
-        db.close()
-        return {"error": "Invalid status", "allowed_statuses": ALLOWED_ORDER_STATUSES}
 
-    order.status = status
+# @app.put("/orders/{order_id}/status")
+# def update_order_status(
+#     order_id: int,
+#     status: str,
+#     authorization: str = Header(None),
+# ):
+#     current_user = get_current_user(authorization)
 
-    db.commit()
-    db.refresh(order)
-    db.close()
+#     if not current_user:
+#         return JSONResponse(
+#             status_code=401,
+#             content={"error": "Not authenticated"},
+#         )
 
-    return {
-        "message": "Order status updated successfully",
-        "order_id": order.id,
-        "status": order.status,
-    }
+#     db = SessionLocal()
+
+#     order = db.query(models.Order).filter(models.Order.id == order_id).first()
+
+#     if not order:
+#         db.close()
+#         return {"error": "Order not found"}
+
+#     if status not in ALLOWED_ORDER_STATUSES:
+#         db.close()
+#         return {
+#             "error": "Invalid status",
+#             "allowed_statuses": ALLOWED_ORDER_STATUSES,
+#         }
+
+#     if current_user.id not in [order.buyer_id, order.farmer_id]:
+#         db.close()
+#         return JSONResponse(
+#             status_code=403,
+#             content={"error": "You do not have access to this order"},
+#         )
+
+#     order.status = status
+
+#     db.commit()
+#     db.refresh(order)
+#     db.close()
+
+#     return {
+#         "message": "Order status updated successfully",
+#         "order_id": order.id,
+#         "status": order.status,
+#     }
 
 
 @app.put("/orders/{order_id}/accept")
-def accept_order(order_id: int):
+def accept_order(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can accept orders"},
+        )
     db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
@@ -355,6 +546,10 @@ def accept_order(order_id: int):
             "error": "Only pending orders can be accepted",
             "current_status": order.status,
         }
+
+    if order.farmer_id != current_user.id:
+        db.close()
+        return {"error": "You can only accept orders for your own products"}
 
     product = (
         db.query(models.Product).filter(models.Product.id == order.product_id).first()
@@ -384,8 +579,28 @@ def accept_order(order_id: int):
 
 
 @app.put("/orders/{order_id}/ready")
-def mark_order_ready(order_id: int, vehicle_capacity: int):
+def mark_order_ready(
+    order_id: int,
+    vehicle_capacity: int = 500,
+    authorization: str = Header(None),
+):
+
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can mark orders ready"},
+        )
     db = SessionLocal()
+
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
 
@@ -393,9 +608,21 @@ def mark_order_ready(order_id: int, vehicle_capacity: int):
         db.close()
         return {"error": "Order not found"}
 
+    if order.farmer_id != current_user.id:
+        db.close()
+        return {"error": "You can only mark your own orders ready"}
+
     if order.status != "accepted":
         db.close()
         return {"error": "Only accepted orders can be marked as ready"}
+
+    if vehicle_capacity <= 0:
+        db.close()
+        return {"error": "Vehicle capacity must be greater than zero"}
+
+    if vehicle_capacity < order.quantity:
+        db.close()
+        return {"error": "Vehicle capacity must be at least the order quantity"}
 
     product = (
         db.query(models.Product).filter(models.Product.id == order.product_id).first()
@@ -440,7 +667,23 @@ def mark_order_ready(order_id: int, vehicle_capacity: int):
 
 
 @app.put("/orders/{order_id}/in-transit")
-def mark_order_in_transit(order_id: int):
+def mark_order_in_transit(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can mark orders in transit"},
+        )
 
     db = SessionLocal()
 
@@ -449,6 +692,10 @@ def mark_order_in_transit(order_id: int):
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.farmer_id != current_user.id:
+        db.close()
+        return {"error": "You can only start delivery for your own orders"}
 
     if order.status != "ready":
         db.close()
@@ -573,7 +820,24 @@ def get_delivery_location(delivery_id: int, authorization: str = Header(None)):
 
 
 @app.put("/orders/{order_id}/delivered")
-def mark_order_delivered(order_id: int):
+def mark_order_delivered(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can mark orders as delivered"},
+        )
+
     db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
@@ -581,6 +845,10 @@ def mark_order_delivered(order_id: int):
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.farmer_id != current_user.id:
+        db.close()
+        return {"error": "You can only mark your own orders as delivered"}
 
     if order.status != "in_transit":
         db.close()
@@ -602,7 +870,24 @@ def mark_order_delivered(order_id: int):
 
 
 @app.put("/orders/{order_id}/confirm-received")
-def confirm_order_received(order_id: int):
+def confirm_order_received(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "buyer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only buyers can confirm received orders"},
+        )
+
     db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
@@ -610,6 +895,10 @@ def confirm_order_received(order_id: int):
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.buyer_id != current_user.id:
+        db.close()
+        return {"error": "You can only confirm your own orders"}
 
     if order.status != "delivery_confirmation_pending":
         db.close()
@@ -654,7 +943,24 @@ def confirm_order_received(order_id: int):
 
 
 @app.put("/orders/{order_id}/not-received")
-def reject_order_received(order_id: int):
+def reject_order_received(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "buyer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only buyers can report an order as not received"},
+        )
+
     db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
@@ -662,6 +968,10 @@ def reject_order_received(order_id: int):
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.buyer_id != current_user.id:
+        db.close()
+        return {"error": "You can only report your own orders as not received"}
 
     if order.status != "delivery_confirmation_pending":
         db.close()
@@ -729,14 +1039,36 @@ def delete_order(order_id: int, authorization: str = Header(None)):
 
 
 @app.put("/orders/{order_id}/reject")
-def reject_order(order_id: int):
+def reject_order(
+    order_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can reject orders"},
+        )
+
     db = SessionLocal()
+    # db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
 
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.farmer_id != current_user.id:
+        db.close()
+        return {"error": "You can only reject orders for your own products"}
 
     if order.status != "pending":
         db.close()
@@ -759,7 +1091,25 @@ def reject_order(order_id: int):
 
 
 @app.post("/deliveries")
-def create_delivery(order_id: int, vehicle_capacity: int):
+def create_delivery(
+    order_id: int,
+    vehicle_capacity: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Not authenticated"},
+        )
+
+    if current_user.role != "farmer":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Only farmers can create deliveries"},
+        )
+
     db = SessionLocal()
 
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
@@ -767,6 +1117,13 @@ def create_delivery(order_id: int, vehicle_capacity: int):
     if not order:
         db.close()
         return {"error": "Order not found"}
+
+    if order.farmer_id != current_user.id:
+        db.close()
+        return JSONResponse(
+            status_code=403,
+            content={"error": "You do not own this order"},
+        )
 
     if order.status != "accepted":
         db.close()
@@ -806,7 +1163,17 @@ def create_delivery(order_id: int, vehicle_capacity: int):
 
 
 @app.get("/deliveries")
-def get_deliveries():
+def get_deliveries(
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
     db = SessionLocal()
 
     deliveries = db.query(models.Delivery).all()
@@ -814,6 +1181,16 @@ def get_deliveries():
     result = []
 
     for delivery in deliveries:
+        order = delivery.order
+
+        if not order:
+            continue
+
+        if current_user.id not in [
+            order.farmer_id,
+            order.buyer_id,
+        ]:
+            continue
 
         delivery_data = {
             "id": delivery.id,
@@ -905,7 +1282,7 @@ def calculate_real_route(pickup_location, delivery_location):
         "https://router.project-osrm.org/route/v1/driving/"
         f"{pickup['longitude']},{pickup['latitude']};"
         f"{destination['longitude']},{destination['latitude']}"
-        "?overview=full&geometries=geojson"
+        "?overview=full&geometries=geojson&alternatives=true"
     )
 
     request = Request(url, headers={"User-Agent": "SmartAgriMarketplace/1.0"})
@@ -916,7 +1293,21 @@ def calculate_real_route(pickup_location, delivery_location):
     if data.get("code") != "Ok" or not data.get("routes"):
         return {"error": "No road route found"}
 
-    route = data["routes"][0]
+    for index, alternative_route in enumerate(data["routes"]):
+        print(
+            f"OSRM ROUTE {index + 1} DISTANCE:",
+            round(alternative_route["distance"] / 1000, 2),
+            "km",
+        )
+
+    route = min(data["routes"], key=lambda item: item["distance"])
+
+    print("SELECTED SHORTEST DISTANCE METERS:", route["distance"])
+    print("SELECTED ROUTE DURATION SECONDS:", route["duration"])
+
+    print("OSRM ROUTE DISTANCE METERS:", route["distance"])
+    print("OSRM ROUTE DURATION SECONDS:", route["duration"])
+    print("OSRM ALTERNATIVES:", len(data.get("routes", [])))
 
     distance_km = round(route["distance"] / 1000, 2)
 
@@ -972,7 +1363,17 @@ def calculate_real_route(pickup_location, delivery_location):
 
 
 @app.put("/deliveries/{delivery_id}/optimize")
-def optimize_delivery(delivery_id: int):
+def optimize_delivery(
+    delivery_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
 
     db = SessionLocal()
 
@@ -983,6 +1384,23 @@ def optimize_delivery(delivery_id: int):
     if not delivery:
         db.close()
         return {"error": "Delivery not found"}
+
+    order = delivery.order
+
+    if not order:
+        db.close()
+        return {"error": "Order not found for this delivery"}
+
+    if current_user.id not in [
+        order.farmer_id,
+        order.buyer_id,
+    ]:
+        db.close()
+        return {"error": "You are not authorized to optimize this delivery"}
+
+    # if not delivery:
+    #     db.close()
+    #     return {"error": "Delivery not found"}
 
     result = calculate_real_route(delivery.pickup_location, delivery.delivery_location)
 
@@ -1017,7 +1435,17 @@ def optimize_delivery(delivery_id: int):
 
 
 @app.put("/deliveries/{delivery_id}/in-transit")
-def mark_delivery_in_transit(delivery_id: int):
+def mark_delivery_in_transit(
+    delivery_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
 
     db = SessionLocal()
 
@@ -1029,36 +1457,41 @@ def mark_delivery_in_transit(delivery_id: int):
         db.close()
         return {"error": "Delivery not found"}
 
-    if delivery.status != "ready":
-        db.close()
-        return {"error": ("Only ready deliveries " "can be marked as in transit")}
+    order = delivery.order
 
-    if not delivery.route:
+    if not order:
         db.close()
-        return {"error": ("Optimize the delivery route " "before starting transit")}
+        return {"error": "Order not found for this delivery"}
+
+    if current_user.id != order.farmer_id:
+        db.close()
+        return {"error": "You are not authorized to start this delivery"}
 
     delivery.status = "in_transit"
 
-    order = db.query(models.Order).filter(models.Order.id == delivery.order_id).first()
-
-    if order:
-        order.status = "in_transit"
-
     db.commit()
-
     db.refresh(delivery)
-
     db.close()
 
     return {
-        "message": ("Delivery marked as in transit"),
+        "message": "Delivery started successfully",
         "delivery_id": delivery.id,
         "status": delivery.status,
     }
 
 
 @app.put("/deliveries/{delivery_id}/delivered")
-def mark_delivery_delivered(delivery_id: int):
+def mark_delivery_delivered(
+    delivery_id: int,
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
 
     db = SessionLocal()
 
@@ -1069,63 +1502,32 @@ def mark_delivery_delivered(delivery_id: int):
     if not delivery:
         db.close()
         return {"error": "Delivery not found"}
+
+    order = delivery.order
+
+    if not order:
+        db.close()
+        return {"error": "Order not found for this delivery"}
+
+    if current_user.id != order.farmer_id:
+        db.close()
+        return {"error": "You are not authorized to mark this delivery delivered"}
 
     if delivery.status != "in_transit":
         db.close()
-        return {"error": ("Only in-transit deliveries " "can be marked as delivered")}
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Only deliveries in transit can be marked as delivered"},
+        )
 
-    delivery.status = "delivered"
-
-    order = db.query(models.Order).filter(models.Order.id == delivery.order_id).first()
-
-    if order:
-        order.status = "delivered"
+    delivery.status = "delivery_confirmation_pending"
 
     db.commit()
-
     db.refresh(delivery)
-
     db.close()
 
     return {
-        "message": ("Delivery marked as delivered"),
-        "delivery_id": delivery.id,
-        "status": delivery.status,
-    }
-
-
-@app.put("/deliveries/{delivery_id}/status")
-def update_delivery_status(delivery_id: int, status: str):
-
-    db = SessionLocal()
-
-    delivery = (
-        db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
-    )
-
-    if not delivery:
-        db.close()
-        return {"error": "Delivery not found"}
-
-    allowed_statuses = ["pending", "in_transit", "delivered"]
-
-    if status not in allowed_statuses:
-        db.close()
-        return {
-            "error": "Invalid delivery status",
-            "allowed_statuses": allowed_statuses,
-        }
-
-    delivery.status = status
-
-    db.commit()
-
-    db.refresh(delivery)
-
-    db.close()
-
-    return {
-        "message": ("Delivery status updated successfully"),
+        "message": "Delivery marked as delivered",
         "delivery_id": delivery.id,
         "status": delivery.status,
     }
@@ -1133,8 +1535,40 @@ def update_delivery_status(delivery_id: int, status: str):
 
 @app.post("/forecast")
 def create_forecast(
-    product: str = "tomato", location: str = "Mumbai", days_ahead: int = 7
+    product: str = "tomato",
+    location: str = "Mumbai",
+    days_ahead: int = 7,
+    authorization: str = Header(None),
 ):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
+    product = product.strip()
+    location = location.strip()
+
+    if not product or len(product) > 100:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Product must be 1–100 characters"},
+        )
+
+    if not location or len(location) > 100:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Location must be 1–100 characters"},
+        )
+
+    if not 1 <= days_ahead <= 365:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "days_ahead must be between 1 and 365"},
+        )
+
     try:
         (
             predicted_quantity,
@@ -1160,6 +1594,7 @@ def create_forecast(
         forecast_date=forecast_date,
         predicted_quantity=predicted_quantity,
         source=forecast_source,
+        user_id=current_user.id,
     )
 
     return {
@@ -1177,9 +1612,21 @@ def create_forecast(
 
 
 @app.get("/forecasts")
-def get_forecasts():
+def get_forecasts(
+    authorization: str = Header(None),
+):
+    current_user = get_current_user(authorization)
+
+    if not current_user:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Authentication required"},
+        )
+
     db = SessionLocal()
-    forecasts = db.query(Forecast).all()
+
+    forecasts = db.query(Forecast).filter(Forecast.user_id == current_user.id).all()
+
     result = [
         {
             "id": forecast.id,
@@ -1191,7 +1638,9 @@ def get_forecasts():
         }
         for forecast in forecasts
     ]
+
     db.close()
+
     return result
 
 
@@ -1199,70 +1648,124 @@ def get_forecasts():
 def login_user(email: str, password: str):
     db = SessionLocal()
 
-    user = db.query(models.User).filter(models.User.email == email).first()
+    try:
+        now = time()
 
-    if not user:
+        # Keep only failed attempts from the last 5 minutes
+        attempts = [
+            attempt
+            for attempt in LOGIN_ATTEMPTS[email]
+            if now - attempt < LOGIN_WINDOW_SECONDS
+        ]
+        LOGIN_ATTEMPTS[email] = attempts
+
+        # Reject if 5 recent failures have already occurred
+        if len(attempts) >= LOGIN_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Too many failed login attempts. Try again in 5 minutes."
+                },
+            )
+
+        user = db.query(models.User).filter(models.User.email == email).first()
+
+        if not user:
+            LOGIN_ATTEMPTS[email].append(now)
+            return JSONResponse(
+                status_code=401,
+                content={"message": "Invalid email or password"},
+            )
+
+        if user.password.startswith("$argon2"):
+            password_is_valid = password_hash.verify(
+                password,
+                user.password,
+            )
+        else:
+            # Temporary support for accounts created before hashing
+            password_is_valid = user.password == password
+
+            if password_is_valid:
+                # Upgrade old plaintext password to a hash
+                user.password = password_hash.hash(password)
+                db.commit()
+
+        if not password_is_valid:
+            LOGIN_ATTEMPTS[email].append(now)
+            return JSONResponse(
+                status_code=401,
+                content={"message": "Invalid email or password"},
+            )
+
+        # Clear failures after successful login
+        LOGIN_ATTEMPTS.pop(email, None)
+
+        import secrets
+
+        token = secrets.token_hex(32)
+        TOKENS[token] = user.id
+
+        return {
+            "message": "Login successful",
+            "token": token,
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+        }
+
+    finally:
         db.close()
-        return {"message": "Invalid email or password"}
-
-    if user.password != password:
-        db.close()
-        return {"message": "Invalid email or password"}
-    import secrets
-
-    token = secrets.token_hex(32)
-    TOKENS[token] = user.id
-
-    db.close()
-
-    return {
-        "message": "Login successful",
-        "token": token,
-        "user_id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": user.role,
-    }
 
 
 @app.post("/register")
 def register_user(
-    name: str, email: str, password: str, role: str, phone: str = "", location: str = ""
+    name: str,
+    email: str,
+    password: str,
+    role: str,
+    phone: str = "",
+    location: str = "",
 ):
+
     db = SessionLocal()
 
-    existing_user = db.query(models.User).filter(models.User.email == email).first()
+    try:
+        existing_user = db.query(models.User).filter(models.User.email == email).first()
 
-    if existing_user:
+        if existing_user:
+            return {"message": "User with this email already exists"}
+
+        if role not in ["farmer", "buyer"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Role must be farmer or buyer",
+            )
+
+        user = models.User(
+            name=name,
+            email=email,
+            password=password_hash.hash(password),
+            role=role,
+            phone=phone,
+            location=location,
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "message": "User registered successfully",
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+        }
+
+    finally:
         db.close()
-        return {"message": "User with this email already exists"}
-
-    if role not in ["farmer", "buyer"]:
-        db.close()
-        return {"message": "Role must be farmer or buyer"}
-
-    user = models.User(
-        name=name,
-        email=email,
-        password=password,
-        role=role,
-        phone=phone,
-        location=location,
-    )
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    db.close()
-
-    return {
-        "message": "User registered successfully",
-        "user_id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": user.role,
-    }
 
 
 @app.get("/orders/history/csv")

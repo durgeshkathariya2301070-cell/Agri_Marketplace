@@ -71,9 +71,14 @@ function Register() {
     const [confirmPassword, setConfirmPassword] = useState("")
     const [role, setRole] = useState("farmer")
     const [agreeTerms, setAgreeTerms] = useState(false)
+   
+
+
 
     const handleSubmit = async (e) => {
         e.preventDefault()
+
+
 
         if (password !== confirmPassword) {
             alert("Passwords do not match!")
@@ -97,7 +102,7 @@ function Register() {
                 location
             })
 
-            
+
 
             console.log("Registration successful:", data)
             navigate("/login")
@@ -138,6 +143,7 @@ function Register() {
                         />
                     </div>
 
+                   
                     <div className="form-group">
                         <label>Phone</label>
                         <div className="phone-input-group">

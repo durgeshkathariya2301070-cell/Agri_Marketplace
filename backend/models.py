@@ -108,13 +108,15 @@ class DemandData(Base):
     quantity_sold = Column(Numeric(12, 3), nullable=False)
     source = Column(String, nullable=False, default="mandi")
 
-
 class Forecast(Base):
     __tablename__ = "forecasts"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     product = Column(String, nullable=False)
     location = Column(String, nullable=False)
     forecast_date = Column(String, nullable=False)
     predicted_quantity = Column(Numeric(12, 3), nullable=False)
     source = Column(String, nullable=False, default="mandi")
+
+    user = relationship("User")

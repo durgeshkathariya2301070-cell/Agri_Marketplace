@@ -54,10 +54,10 @@ function Deliveries() {
         return optimizeDelivery(deliveryId)
             .then((updatedDelivery) => {
 
-                localStorage.setItem(
-                    `delivery-map-${deliveryId}`,
-                    JSON.stringify(updatedDelivery)
-                )
+                // localStorage.setItem(
+                //     `delivery-map-${deliveryId}`,
+                //     JSON.stringify(updatedDelivery)
+                // )
 
                 setDeliveries((currentDeliveries) =>
                     currentDeliveries.map((delivery) =>

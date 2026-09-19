@@ -56,6 +56,18 @@ function ProductCard({ product }) {
                     disabled={loading}
                     onClick={async () => {
                         try {
+                            if (!Number.isFinite(quantity) || quantity <= 0) {
+                                alert("Please enter a valid quantity.")
+                                return
+                            }
+
+                            if (quantity > Number(product.quantity)) {
+                                alert(
+                                    `Only ${product.quantity} ${product.unit} is available. You cannot order more than the available quantity.`
+                                )
+                                return
+                            }
+
                             setLoading(true)
 
                             const data = await createOrder({

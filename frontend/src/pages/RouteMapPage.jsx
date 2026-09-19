@@ -19,6 +19,13 @@ function RouteMapPage() {
         location.state?.delivery || null
     )
 
+    console.log(
+        "ROUTE MAP PAGE INITIAL DELIVERY:",
+        location.state?.delivery
+    )
+
+
+
     const [routeLoading, setRouteLoading] = useState(false)
 
     const [loading, setLoading] = useState(
@@ -33,13 +40,9 @@ function RouteMapPage() {
         location.state?.delivery?.current_longitude ?? null
     )
 
-
     useEffect(() => {
-
         const fetchDelivery = async () => {
-
             try {
-
                 const deliveries = await getDeliveries()
 
                 const foundDelivery = deliveries.find(
@@ -47,30 +50,80 @@ function RouteMapPage() {
                         Number(item.id) === Number(deliveryId)
                 )
 
-                if (foundDelivery) {
-
-                    setDelivery(foundDelivery)
-
-                    setCurrentLatitude(
-                        foundDelivery.current_latitude ?? null
-                    )
-
-                    setCurrentLongitude(
-                        foundDelivery.current_longitude ?? null
-                    )
+                if (!foundDelivery) {
+                    return
                 }
 
-            } catch (error) {
+                console.log(
+                    "FOUND DELIVERY:",
+                    foundDelivery
+                )
 
+                let finalDelivery = foundDelivery
+
+                try {
+                    setRouteLoading(true)
+
+                    const routeData =
+                        await getOptimizedDeliveryRoute(
+                            foundDelivery.id,
+                            foundDelivery.pickup_location,
+                            foundDelivery.delivery_location
+                        )
+
+                    console.log(
+                        "ROUTE DATA FROM BACKEND:",
+                        routeData
+                    )
+
+                    finalDelivery = {
+                        ...foundDelivery,
+                        route: routeData.route,
+                        distance:
+                            routeData.total_distance_km,
+                        estimated_time:
+                            routeData.estimated_time_min,
+                        pickup_coordinates:
+                            routeData.pickup_coordinates,
+                        delivery_coordinates:
+                            routeData.delivery_coordinates,
+                        intermediate_locations:
+                            routeData.intermediate_locations,
+                        intermediate_coordinates:
+                            routeData.intermediate_coordinates,
+                        road_coordinates:
+                            routeData.road_coordinates
+                    }
+
+                    console.log(
+                        "FINAL DELIVERY WITH ROUTE:",
+                        finalDelivery
+                    )
+                } catch (error) {
+                    console.error(
+                        "Failed to optimize route:",
+                        error
+                    )
+                } finally {
+                    setRouteLoading(false)
+                }
+
+                setDelivery(finalDelivery)
+
+                setCurrentLatitude(
+                    finalDelivery.current_latitude ?? null
+                )
+
+                setCurrentLongitude(
+                    finalDelivery.current_longitude ?? null
+                )
+            } catch (error) {
                 console.error(
                     "Failed to fetch delivery:",
                     error
                 )
-
             } finally {
-
                 setLoading(false)
-
             }
         }
 
@@ -79,73 +132,9 @@ function RouteMapPage() {
         } else {
             setLoading(false)
         }
-
     }, [deliveryId])
 
-
-    useEffect(() => {
-
-        const fetchRoute = async () => {
-
-            if (!delivery?.id) {
-                return
-            }
-
-            if (
-                delivery.pickup_coordinates &&
-                delivery.delivery_coordinates &&
-                delivery.road_coordinates &&
-                delivery.road_coordinates.length > 0
-            ) {
-                return
-            }
-
-            try {
-
-                setRouteLoading(true)
-
-                const routeData =
-                    await getOptimizedDeliveryRoute(
-                        delivery.id,
-                        delivery.pickup_location,
-                        delivery.delivery_location
-                    )
-
-                setDelivery({
-                    ...delivery,
-                    route: routeData.route,
-                    distance: routeData.total_distance_km,
-                    estimated_time:
-                        routeData.estimated_time_min,
-                    pickup_coordinates:
-                        routeData.pickup_coordinates,
-                    delivery_coordinates:
-                        routeData.delivery_coordinates,
-                    intermediate_locations:
-                        routeData.intermediate_locations,
-                    intermediate_coordinates:
-                        routeData.intermediate_coordinates,
-                    road_coordinates:
-                        routeData.road_coordinates
-                })
-
-            } catch (error) {
-
-                console.error(
-                    "Failed to load optimized route:",
-                    error
-                )
-
-            } finally {
-
-                setRouteLoading(false)
-
-            }
-        }
-
-        fetchRoute()
-
-    }, [delivery?.id])
+    
 
 
     useEffect(() => {

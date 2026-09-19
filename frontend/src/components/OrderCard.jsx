@@ -21,7 +21,22 @@ function OrderCard({
 }) {
 
     const [showDetails, setShowDetails] = useState(false)
-    const [vehicleCapacity, setVehicleCapacity] = useState(500)
+    const [vehicleCapacity, setVehicleCapacity] = useState(() => {
+        const quantity = Number(order.quantity)
+
+        return [100, 250, 500, 1000, 5000]
+            .find((capacity) => capacity >= quantity) || quantity
+    })
+
+    useEffect(() => {
+        const quantity = Number(order.quantity)
+
+        const suitableCapacity = [100, 250, 500, 1000, 5000]
+            .find((capacity) => capacity >= quantity) || quantity
+
+        setVehicleCapacity(suitableCapacity)
+    }, [order.quantity])
+    
     const navigate = useNavigate();
     console.log("ORDER CARD FILE LOADED")
     useEffect(() => {
@@ -327,15 +342,21 @@ function OrderCard({
 
                     <select
                         value={vehicleCapacity}
-
                         onChange={(e) => setVehicleCapacity(Number(e.target.value))}
                     >
-                        <option value={100}>100 kg</option>
-                        <option value={250}>250 kg</option>
-                        <option value={500}>500 kg</option>
-                        <option value={1000}>1000 kg</option>
+                        {[100, 250, 500, 1000, 5000]
+                            .filter((capacity) => capacity >= Number(order.quantity))
+                            .map((capacity) => (
+                                <option key={capacity} value={capacity}>
+                                    {capacity} kg
+                                </option>
+                            ))}
+                        {Number(order.quantity) > 1000 && (
+                            <option value={Number(order.quantity)}>
+                                {Number(order.quantity)} kg (required)
+                            </option>
+                        )}
                     </select>
-
                     <button onClick={handleReady}>
                         📦 Mark Ready
                     </button>
@@ -407,18 +428,23 @@ function OrderCard({
                 {user?.role === "buyer" &&
                     order.status === "in_transit" &&
                     delivery?.id && (
-                        <button
-                            onClick={() =>
-                                navigate(
-                                    `/deliveries/${delivery.id}/map`,
-                                    {
-                                        state: { delivery: delivery }
-                                    }
-                                )
-                            }
-                        >
-                            📍 Track Order
-                        </button>
+                        <div className="track-order-action">
+                            <button
+                                className="track-order-button"
+                                onClick={() =>
+                                    navigate(
+                                        `/deliveries/${delivery.id}/map`,
+                                        {
+                                            state: {
+                                                delivery: delivery
+                                            }
+                                        }
+                                    )
+                                }
+                            >
+                                📍 Track Order
+                            </button>
+                        </div>
                     )}
                 {/* Farmer View Route Button */}
                 {delivery?.route &&

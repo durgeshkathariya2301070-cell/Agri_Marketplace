@@ -98,7 +98,8 @@ export async function getOrders() {
 
 export async function acceptOrder(orderId) {
     const response = await fetch(`${API_URL}/orders/${orderId}/accept`, {
-        method: "PUT"
+        method: "PUT",
+        headers: getAuthHeaders()
     })
 
     if (!response.ok) {
@@ -110,7 +111,8 @@ export async function acceptOrder(orderId) {
 
 export async function rejectOrder(orderId) {
     const response = await fetch(`${API_URL}/orders/${orderId}/reject`, {
-        method: "PUT"
+        method: "PUT",
+        headers: getAuthHeaders()
     })
 
     if (!response.ok) {
@@ -120,12 +122,12 @@ export async function rejectOrder(orderId) {
     return response.json()
 }
 
-
 export async function markOrderInTransit(orderId) {
     const response = await fetch(
         `http://127.0.0.1:8000/orders/${orderId}/in-transit`,
         {
             method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -144,7 +146,8 @@ export async function markOrderDelivered(orderId) {
     const response = await fetch(
         `${API_URL}/orders/${orderId}/delivered`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -163,7 +166,8 @@ export async function confirmOrderReceived(orderId) {
     const response = await fetch(
         `${API_URL}/orders/${orderId}/confirm-received`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -177,12 +181,12 @@ export async function confirmOrderReceived(orderId) {
 
     return data
 }
-
 export async function rejectOrderReceived(orderId) {
     const response = await fetch(
         `${API_URL}/orders/${orderId}/not-received`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -196,36 +200,40 @@ export async function rejectOrderReceived(orderId) {
 
     return data
 }
-
 export async function markDeliveryInTransit(deliveryId) {
     const response = await fetch(
-        `http://127.0.0.1:8000/deliveries/${deliveryId}/in-transit`,
+        `${API_URL}/deliveries/${deliveryId}/in-transit`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
     const data = await response.json()
 
     if (!response.ok || data.error) {
-        throw new Error(data.error || "Failed to mark delivery in transit")
+        throw new Error(
+            data.error || "Failed to start delivery"
+        )
     }
 
     return data
 }
-
 export async function markDeliveryDelivered(deliveryId) {
     const response = await fetch(
-        `http://127.0.0.1:8000/deliveries/${deliveryId}/delivered`,
+        `${API_URL}/deliveries/${deliveryId}/delivered`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
     const data = await response.json()
 
     if (!response.ok || data.error) {
-        throw new Error(data.error || "Failed to mark delivery as delivered")
+        throw new Error(
+            data.error || "Failed to mark delivery delivered"
+        )
     }
 
     return data
@@ -233,9 +241,10 @@ export async function markDeliveryDelivered(deliveryId) {
 
 export async function markOrderReady(orderId, vehicleCapacity) {
     const response = await fetch(
-        `http://127.0.0.1:8000/orders/${orderId}/ready?vehicle_capacity=${vehicleCapacity}`,
+        `${API_URL}/orders/${orderId}/ready?vehicle_capacity=${vehicleCapacity}`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -276,7 +285,8 @@ export async function createOrder(orderData) {
     })
 
     const response = await fetch(`${API_URL}/orders?${params}`, {
-        method: "POST"
+        method: "POST",
+        headers: getAuthHeaders()
     })
 
     const data = await response.json()
@@ -289,30 +299,37 @@ export async function createOrder(orderData) {
 }
 
 export async function getDeliveries() {
-    const response = await fetch(`${API_URL}/deliveries`)
+    const response = await fetch(`${API_URL}/deliveries`, {
+        headers: getAuthHeaders()
+    })
 
-    if (!response.ok) {
-        throw new Error("Failed to fetch deliveries")
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to fetch deliveries")
     }
 
-    return response.json()
+    return data
 }
-
 export async function optimizeDelivery(deliveryId) {
     const response = await fetch(
         `${API_URL}/deliveries/${deliveryId}/optimize`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
-    if (!response.ok) {
-        throw new Error("Failed to optimize delivery")
+    const data = await response.json()
+
+    if (!response.ok || data.error) {
+        throw new Error(
+            data.error || "Failed to optimize delivery"
+        )
     }
 
-    return response.json()
+    return data
 }
-
 export async function getOptimizedDeliveryRoute(
     deliveryId,
     pickupLocation,
@@ -321,7 +338,8 @@ export async function getOptimizedDeliveryRoute(
     const response = await fetch(
         `${API_URL}/deliveries/${deliveryId}/optimize`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 
@@ -338,7 +356,12 @@ export async function getOptimizedDeliveryRoute(
 }
 
 export async function getForecasts() {
-    const response = await fetch(`${API_URL}/forecasts`)
+    const response = await fetch(
+        `${API_URL}/forecasts`,
+        {
+            headers: getAuthHeaders()
+        }
+    )
 
     if (!response.ok) {
         throw new Error("Failed to fetch forecasts")
@@ -347,22 +370,31 @@ export async function getForecasts() {
     return response.json()
 }
 
-export async function generateForecast(product, location, daysAhead) {
+
+export async function generateForecast(
+    product,
+    location,
+    daysAhead
+) {
     const response = await fetch(
         `${API_URL}/forecast?product=${encodeURIComponent(product)}&location=${encodeURIComponent(location)}&days_ahead=${daysAhead}`,
         {
-            method: "POST"
+            method: "POST",
+            headers: getAuthHeaders()
         }
     )
 
     const data = await response.json()
 
     if (!response.ok || data.error) {
-        throw new Error(data.error || "Failed to generate forecast")
+        throw new Error(
+            data.error || "Failed to generate forecast"
+        )
     }
 
     return data
 }
+
 
 export async function registerUser(userData) {
     const params = new URLSearchParams({
@@ -423,13 +455,16 @@ export async function addProduct(productData) {
     })
 
     const response = await fetch(`${API_URL}/products?${params}`, {
-        method: "POST"
+        method: "POST",
+        headers: getAuthHeaders()
     })
 
     const data = await response.json()
 
     if (!response.ok) {
-        throw new Error(data.detail || data.message || "Failed to add product")
+        throw new Error(
+            data.error || data.detail || data.message || "Failed to add product"
+        )
     }
 
     return data
@@ -448,7 +483,8 @@ export async function updateProduct(productId, productData) {
     const response = await fetch(
         `${API_URL}/products/${productId}?${params}`,
         {
-            method: "PUT"
+            method: "PUT",
+            headers: getAuthHeaders()
         }
     )
 

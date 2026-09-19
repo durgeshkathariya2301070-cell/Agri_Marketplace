@@ -182,9 +182,9 @@ function DeliveryCard({
                     </div>
                 )}
 
-                {delivery.route &&
-                    delivery.road_coordinates &&
-                    delivery.road_coordinates.length > 0 && (
+                {delivery.route &&(  
+                    // delivery.road_coordinates &&
+                    // delivery.road_coordinates.length > 0 && (
                         <button
                             onClick={() =>
                                 navigate(

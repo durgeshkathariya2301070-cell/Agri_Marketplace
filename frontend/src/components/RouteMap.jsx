@@ -52,24 +52,87 @@ function RouteMap({
     currentLongitude
 }) {
 
-    if (
-        !pickupCoordinates ||
-        !deliveryCoordinates ||
-        !roadCoordinates ||
-        roadCoordinates.length === 0
-    ) {
-        return (
-            <div>
-                Route map data is not available.
-            </div>
-        )
-    }
+    console.log("ROUTE MAP ALL PROPS:", {
+        pickupCoordinates,
+        deliveryCoordinates,
+        roadCoordinates,
+        intermediateCoordinates,
+        currentLatitude,
+        currentLongitude
+    })
+
+    console.log("FARMER MAP DATA:", {
+        pickupCoordinates,
+        deliveryCoordinates,
+        roadCoordinatesLength: roadCoordinates?.length,
+        currentLatitude,
+        currentLongitude
+    })
+
+    console.log(
+        "FARMER ROAD COORDINATES VALUE:",
+        roadCoordinates
+    )
+
+    console.log(
+        "FARMER ROAD COORDINATES TYPE:",
+        typeof roadCoordinates,
+        Array.isArray(roadCoordinates)
+    )
+
+    console.log("MAP DATA VALIDATION:", {
+        hasPickup: Boolean(pickupCoordinates),
+        hasDelivery: Boolean(deliveryCoordinates),
+        hasRoad: Boolean(roadCoordinates),
+        roadLength: roadCoordinates?.length
+    })
+    const safeRoadCoordinates = Array.isArray(roadCoordinates)
+        ? roadCoordinates
+        : []
+
+    console.log(
+        "ROAD COORDINATES FIRST 3:",
+        safeRoadCoordinates.slice(0, 3)
+    )
+
+    console.log(
+        "ROAD COORDINATES LAST 3:",
+        safeRoadCoordinates.slice(-3)
+    )
 
     const allCoordinates = [
         pickupCoordinates,
         ...(intermediateCoordinates || []),
         deliveryCoordinates
     ]
+
+    const isValidCoordinate = (coordinate) =>
+        Array.isArray(coordinate) &&
+        coordinate.length >= 2 &&
+        Number.isFinite(Number(coordinate[0])) &&
+        Number.isFinite(Number(coordinate[1]))
+
+    const safePickupCoordinates =
+        isValidCoordinate(pickupCoordinates)
+            ? pickupCoordinates
+            : null
+
+    const safeDeliveryCoordinates =
+        isValidCoordinate(deliveryCoordinates)
+            ? deliveryCoordinates
+            : null
+
+    const safeIntermediateCoordinates =
+        (intermediateCoordinates || []).filter(
+            isValidCoordinate
+        )
+
+    console.log("FARMER PICKUP:", pickupCoordinates)
+    console.log("FARMER DELIVERY:", deliveryCoordinates)
+    console.log(
+        "FARMER INTERMEDIATE:",
+        intermediateCoordinates
+    )
 
     const currentFarmerCoordinates =
         currentLatitude !== null &&
@@ -102,7 +165,8 @@ function RouteMap({
                 zoom={7}
                 style={{
                     width: "100%",
-                    height: "100%"
+                    height: "650px",
+                    minHeight: "650px"
                 }}
             >
 
@@ -115,20 +179,17 @@ function RouteMap({
                     coordinates={
                         currentFarmerCoordinates
                             ? [
-                                ...roadCoordinates,
+                                ...safeRoadCoordinates,
                                 currentFarmerCoordinates
                             ]
-                            : roadCoordinates
+                            : safeRoadCoordinates
                     }
                 />
 
                 <Polyline
-                    positions={roadCoordinates}
-                    pathOptions={{
-                        weight: 5
-                    }}
+                    positions={safeRoadCoordinates}
+                    pathOptions={{ weight: 5 }}
                 />
-
                 {currentFarmerCoordinates && (
                     <Marker
                         position={currentFarmerCoordinates}
@@ -148,62 +209,71 @@ function RouteMap({
                         </Popup>
                     </Marker>
                 )}
-                <Marker
-                    position={pickupCoordinates}
-                >
-                    <Popup>
-                        <strong>
-                            Pickup Location
-                        </strong>
+                {safePickupCoordinates && (
+                    <Marker
+                        position={safePickupCoordinates}
+                    >
+                        <Popup>
+                            <strong>
+                                Pickup Location
+                            </strong>
 
-                        <br />
+                            <br />
 
-                        {pickupLocation}
-                    </Popup>
-                </Marker>
-
-
-                {(intermediateCoordinates || []).map(
-                    (coordinate, index) => (
-
-                        <Marker
-                            key={index}
-                            position={coordinate}
-                        >
-                            <Popup>
-
-                                <strong>
-                                    Stop {index + 1}
-                                </strong>
-
-                                <br />
-
-                                {
-                                    intermediateLocations?.[index]
-                                    || "Intermediate Location"
-                                }
-
-                            </Popup>
-
-                        </Marker>
-
-                    )
+                            {pickupLocation}
+                        </Popup>
+                    </Marker>
                 )}
 
 
-                <Marker
-                    position={deliveryCoordinates}
-                >
-                    <Popup>
-                        <strong>
-                            Delivery Location
-                        </strong>
+                {safeIntermediateCoordinates.map(
+                    (coordinate, index) => {
+                        console.log(
+                            "FARMER INTERMEDIATE MARKER:",
+                            index,
+                            coordinate
+                        )
 
-                        <br />
+                        return (
+                            <Marker
+                                key={index}
+                                position={coordinate}
+                            >
+                                <Popup>
 
-                        {deliveryLocation}
-                    </Popup>
-                </Marker>
+                                    <strong>
+                                        Stop {index + 1}
+                                    </strong>
+
+                                    <br />
+
+                                    {
+                                        intermediateLocations?.[index]
+                                        || "Intermediate Location"
+                                    }
+
+                                </Popup>
+
+                            </Marker>
+                        )
+                    }
+                )}
+                {safeDeliveryCoordinates && (
+                    <Marker
+                        position={safeDeliveryCoordinates}
+                    >
+                        <Popup>
+                            <strong>
+                                Delivery Location
+                            </strong>
+
+                            <br />
+
+                            {deliveryLocation}
+                        </Popup>
+                    </Marker>
+                )}
+
 
             </MapContainer>
 
