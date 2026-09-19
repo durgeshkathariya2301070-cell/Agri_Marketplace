@@ -56,7 +56,11 @@ def get_current_user(authorization: str = Header(None)):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://heartfelt-naiad-225dd2.netlify.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -329,10 +333,10 @@ def create_order(
                 "error": (
                     f"Only {available_quantity} {product.unit} is available. "
                     "You cannot order more than the available quantity."
-            ),
-            "available_quantity": available_quantity,
-        },
-    )
+                ),
+                "available_quantity": available_quantity,
+            },
+        )
 
     total_price = quantity * product.price
 
@@ -355,7 +359,6 @@ def create_order(
         "order_id": order.id,
         "total_price": total_price,
     }
-    
 
     # db = SessionLocal()
 
