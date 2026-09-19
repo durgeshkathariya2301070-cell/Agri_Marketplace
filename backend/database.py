@@ -1,13 +1,15 @@
+
+import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from urllib.parse import quote_plus
 
-DB_PASSWORD = "sanam@2005"
+load_dotenv()
 
-DATABASE_URL = (
-    f"postgresql://postgres:{quote_plus(DB_PASSWORD)}"
-    "@localhost:5432/agri_marketplace"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL is not set")
 
 engine = create_engine(DATABASE_URL)
 
