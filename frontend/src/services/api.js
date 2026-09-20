@@ -1,4 +1,4 @@
-const API_URL = "http://127.0.0.1:8000"
+const API_URL = "https://agri-marketplace-api-pne6.onrender.com"
 function getAuthHeaders() {
     const user = JSON.parse(localStorage.getItem("user"))
 
@@ -121,10 +121,9 @@ export async function rejectOrder(orderId) {
 
     return response.json()
 }
-
 export async function markOrderInTransit(orderId) {
     const response = await fetch(
-        `http://127.0.0.1:8000/orders/${orderId}/in-transit`,
+        `${API_URL}/orders/${orderId}/in-transit`,
         {
             method: "PUT",
             headers: getAuthHeaders()
